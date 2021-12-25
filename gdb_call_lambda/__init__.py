@@ -1,6 +1,9 @@
 # vim: set et sts=4:
 
+import typing
 from typing import TypeVar, Optional
+from typing import Callable
+import functools
 from dataclasses import dataclass
 import traceback
 import ast
@@ -68,6 +71,18 @@ type_chain (\S+)
         raise
 
 
+
+F=TypeVar("F", bound=Callable)
+def wrap_print_exception_on_error(f: F)->F:
+    @functools.wraps(f)
+    def wrap(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except:
+            traceback.print_exc()
+            raise
+    return typing.cast(F, wrap)
+
 @dataclass
 class CallLambda(gdb.Command):
     executable_object_file=None
@@ -76,41 +91,69 @@ class CallLambda(gdb.Command):
     def __init__(self)->None:
         super().__init__("printl", gdb.COMMAND_DATA, gdb.COMPLETE_EXPRESSION)
 
+    def get_lambda_call_operator(self, lambda_expression: str)->str:
+        """
+        Given a string of a gdb expression whose value is a lambda,
+        return the name of the symbol of the operator() of that lambda.
+
+        Example:
+        self.get_lambda_call_operator("a") = "main::{lambda(int)#1}::operator()(int) const"
+
+        To be used in gdb expressions, single quotes around the expression are usually required.
+        """
+        self.recompute_symbols()
+        return assert_not_none(self.lambda_symbol)[extract_type_identifier(lambda_expression)]
+
+    def get_lambda_call_operator_wrapped(self, lambda_expression: str)->str:
+        """
+        same as above, but always return '$calllambda_lambdacalloperator'.
+
+        The result can only be used once before another invocation of this function.
+
+        Used to workaround a gdb bug (at the time of writing)
+
+        gdb.set_convenience_variable("a",
+            gdb.parse_and_eval( "'main::{lambda(int)#1}::operator()( int) const'" )
+            )
+        → null
+        """
+        result="$calllambda_lambdacalloperator"
+        gdb.execute(f"set {result}='{self.get_lambda_call_operator(lambda_expression)}'")
+        return result
+
+    def get_gdb_expression(self, lambda_expression: str, lambda_arguments: str)->str:
+        """
+        Return a string of a gdb expression, that when evaluated (with gdb.parse_and_eval or
+        gdb 'print' command for example), results in the value of the lambda function call.
+
+        The result can only be used once before another invocation of this function.
+        (depends on the convenience variable '$calllambda_lambdacalloperator')
+        """
+        lambda_arguments=lambda_arguments.strip()
+        lambda_expression=lambda_expression.strip()
+        assert lambda_expression
+
+
+        lambda_call_operator=self.get_lambda_call_operator_wrapped(lambda_expression)
+        return (lambda_call_operator + "(" +
+                "&(" + lambda_expression + ")" +
+                ("," if lambda_arguments else "") +
+                lambda_arguments
+                + ")")
+
+    @wrap_print_exception_on_error
     def invoke(self, argument: str, from_tty: bool)->None:
-        try:
-            argument=argument.strip()
-            assert argument.endswith(")") and "(" in argument, "Argument should have the form func(arg, arg)"
-            argument=argument[:-1]
-            lambda_expression, lambda_arguments=argument.split("(", maxsplit=1)
-            lambda_arguments=lambda_arguments.strip()
-
-            current_object_file=gdb.objfiles()[0]
-            if self.executable_object_file != current_object_file:
-                self.recompute_symbols(current_object_file)
-
-            lambda_call_operator=assert_not_none(self.lambda_symbol)[extract_type_identifier(lambda_expression)]
-
-            #gdb.set_convenience_variable("calllambda_lambdacalloperator",
-            #       gdb.parse_and_eval("'" + lambda_call_operator + "'")
-            #       )
-
-            gdb.execute("set $calllambda_lambdacalloperator='" + lambda_call_operator + "'")
-            
-            #gdb.set_convenience_variable("a", gdb.parse_and_eval( "'main::{lambda(int)#1}::operator()( int) const'" ))
-            # → null!? GDB bug......
-
-            gdb.execute("print $calllambda_lambdacalloperator(" + 
-                    "&(" + lambda_expression + ")" +
-                    ("," if lambda_arguments else "") +
-                    lambda_arguments
-                    + ")")
-        except:
-            #traceback.print_exc()
-            raise
+        argument=argument.strip()
+        assert argument.endswith(")") and "(" in argument, "Argument should have the form func(arg, arg)"
+        argument=argument[:-1]
+        lambda_expression, lambda_arguments=argument.split("(", maxsplit=1)
+        gdb.execute("print "+self.get_gdb_expression(lambda_expression, lambda_arguments))
 
     def recompute_symbols(self, current_object_file=None)->None:
         if current_object_file is None:
             current_object_file=gdb.objfiles()[0]
+        if self.executable_object_file==current_object_file:
+            return
         self.executable_object_file=current_object_file
 
         executable_file_name=current_object_file.filename
@@ -128,4 +171,17 @@ class CallLambda(gdb.Command):
                 if "{lambda" in symbol and "operator()" in symbol
                 }
 
-call_lambda_command=CallLambda()
+command=CallLambda()
+
+
+class CallLambdaFunction(gdb.Function):
+    @wrap_print_exception_on_error
+    def invoke(self, *args):
+        assert len(args)>=1, "Must provide the lambda as first argument"
+        lambda_object=args[0]
+        gdb.set_convenience_variable("calllambda_lambdaobject", lambda_object)
+        return gdb.parse_and_eval(
+                "'" + command.get_lambda_call_operator("$calllambda_lambdaobject") + "'"
+                )(*args)
+
+func=CallLambdaFunction("calll")
