@@ -18,6 +18,8 @@ I.e., call as usual, just replace `print` with `printl`.
 
 The lambda expression (`f` in this case) must not have any `(` characters.
 
+Alternatively, use the convenience function: `print $calll(f, x)`
+
 ## How it works internally/what to do if it doesn't work
 
 See post https://stackoverflow.com/a/70254108/5267751.
