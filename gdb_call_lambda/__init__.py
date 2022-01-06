@@ -39,7 +39,8 @@ nfields.*?
         re.DOTALL
         ))[1]
 
-def extract_type_identifier(expression: str)->str:
+def extract_type_identifier(expression: str)->list[str]:
+    # return both the type_chain and the type node data (sometimes one is used and sometimes the other...???)
     e=gdb.execute("maintenance print type " + expression, to_string=True)
     try:
         if re.match(
@@ -47,24 +48,29 @@ def extract_type_identifier(expression: str)->str:
 code 0x12 \(TYPE_CODE_REF\)
 """, e, re.DOTALL):
             # the expression is considered to have a reference type by gdb. Need to get the underlying struct
-            return assert_not_none(re.match(
+            return [assert_not_none(re.match(
                     r""".*?
 target_type (\S+)
 """
-                    , e, re.DOTALL))[1]
+                    , e, re.DOTALL))[1]]
         else:
             # the expression is considered to have a struct type by gdb
             assert re.match(
                 r""".*?
 code 0x3 \(TYPE_CODE_STRUCT\)
 """, e, re.DOTALL)
-            return assert_not_none(re.match(
-                #r"""type node (\S+)""",
-                r""".*?
+            return [
+                    assert_not_none(re.match(
+                    r""".*?
 type_chain (\S+)
 """,
-                e, re.DOTALL
-                ))[1]
+                    e, re.DOTALL
+                    ))[1],
+                        assert_not_none(re.match(
+                    r"""type node (\S+)""",
+                    e, re.DOTALL
+                    ))[1],
+                    ]
 
     except:
         open("/tmp/aa", "w").write(e)
@@ -102,7 +108,15 @@ class CallLambda(gdb.Command):
         To be used in gdb expressions, single quotes around the expression are usually required.
         """
         self.recompute_symbols()
-        return assert_not_none(self.lambda_symbol)[extract_type_identifier(lambda_expression)]
+        lambda_symbol=assert_not_none(self.lambda_symbol)
+        result={
+                y
+                for x in extract_type_identifier(lambda_expression)
+                for y in [lambda_symbol.get(x)]
+                if y
+                }
+        assert len(result)==1, f"Found {len(result)} instead of 1 possible candidates"
+        return result.pop()
 
     def get_lambda_call_operator_wrapped(self, lambda_expression: str)->str:
         """

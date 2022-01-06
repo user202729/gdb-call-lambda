@@ -5,6 +5,11 @@ auto A=[](int x){
 	return x+1;
 };
 
+auto const A2=[](int x){
+	std::cout<<x<<'\n';
+	return x+1;
+};
+
 // recursive lambda (global)
 auto B=[](auto B, int x)->int{
 	if(x>=0) return B(B, x-1)+1;
@@ -27,7 +32,12 @@ int main(){
 		return x+1;
 	};
 
+	// weird case, but is valid because of lifetime extension
 	auto const& a3=[&](int x){
+		return x+1;
+	};
+
+	auto const a4=[&](int x){
 		return x+1;
 	};
 

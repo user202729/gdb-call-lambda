@@ -1,7 +1,16 @@
 # not to be run directly. Run test.sh instead.
 
 import gdb_call_lambda
-for func, args in [("a", "5"), ("a2", "5"), ("a3", "5"), ("b", "b, 5"), ("A", "5"), ("B", "B, 5")]:
+for func, args in [
+		("a", "5"),
+		("a2", "5"),
+		("a3", "5"),
+		("a4", "5"),
+		("b", "b, 5"),
+		("A", "5"),
+		("A2", "5"),
+		("B", "B, 5"),
+		]:
     try:
         print(gdb_call_lambda.command.invoke(f"{func}({args})", False))
         print("success", func, args)
